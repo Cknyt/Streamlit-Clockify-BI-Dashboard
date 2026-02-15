@@ -1,18 +1,16 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import os # NUEVO: Para verificar si existe el archivo
+import os
 
 # -----------------------------------------------------------------------------
-# CONFIGURACIÓN DE USUARIO (LO QUE TÚ EDITAS)
+# CONFIGURACIÓN
 # -----------------------------------------------------------------------------
 
-# 1. RUTA DEL ARCHIVO POR DEFECTO
-# Asegúrate de que este archivo exista en tu carpeta de GitHub/Local
-ARCHIVO_DEFECTO = "data/reporte_horas.xlsx" 
+# CORRECCIÓN 1: Apuntamos al .csv que tienes en GitHub
+ARCHIVO_DEFECTO = "data/reporte_horas.csv" 
 
-# 2. PRESUPUESTOS PREDEFINIDOS (Configura aquí tus proyectos)
-# Si un proyecto del Excel no está aquí, usará el valor 'DEFAULT_BUDGET'
+# Configura aquí tus presupuestos
 PRESUPUESTOS_CONFIG = {
     "Proyecto Web App": 1200,
     "Consultoría BI": 500,
@@ -21,23 +19,28 @@ PRESUPUESTOS_CONFIG = {
 }
 DEFAULT_BUDGET = 100.0
 
-# -----------------------------------------------------------------------------
-# CONFIGURACIÓN DE LA PÁGINA
-# -----------------------------------------------------------------------------
 st.set_page_config(page_title="Dashboard Clockify", page_icon="📊", layout="wide")
+
+# -----------------------------------------------------------------------------
+# FUNCIONES
+# -----------------------------------------------------------------------------
 
 @st.cache_data
 def load_data(file_path_or_buffer):
     try:
-        # Detectar si es un string (ruta local) o un buffer (archivo subido)
+        # Detectar extensión
         if isinstance(file_path_or_buffer, str):
-            ext = file_path_or_buffer.split('.')[-1]
+            # Es una ruta de archivo (carga automática)
+            filename = file_path_or_buffer
             file_source = file_path_or_buffer
         else:
-            ext = file_path_or_buffer.name.split('.')[-1]
+            # Es un archivo subido (carga manual)
+            filename = file_path_or_buffer.name
             file_source = file_path_or_buffer
 
-        if 'csv' in ext:
+        if filename.endswith('.csv'):
+            # Clockify suele usar comas, pero a veces punto y coma. 
+            # Si falla, prueba cambiar sep=',' a sep=';'
             df = pd.read_csv(file_source, parse_dates=['Start Date'], dayfirst=True)
         else:
             df = pd.read_excel(file_source)
@@ -47,58 +50,82 @@ def load_data(file_path_or_buffer):
         return None
 
 def process_data(df):
+    # Limpieza básica
+    if 'Project' not in df.columns:
+        st.error("El archivo no tiene columna 'Project'")
+        return df
+        
     df = df.dropna(subset=['Project'])
-    df['Duration (decimal)'] = pd.to_numeric(df['Duration (decimal)'], errors='coerce').fillna(0)
-    df['Month_Year'] = df['Start Date'].dt.to_period('M').astype(str)
+    
+    # Convertir duración a numérico
+    if 'Duration (decimal)' in df.columns:
+        df['Duration (decimal)'] = pd.to_numeric(df['Duration (decimal)'], errors='coerce').fillna(0)
+    
+    # Crear columna Mes-Año
+    if 'Start Date' in df.columns:
+        df['Month_Year'] = df['Start Date'].dt.to_period('M').astype(str)
+        
     return df
+
+# CORRECCIÓN 2: Función de estilo robusta (sin lambdas complejos)
+def highlight_row(row):
+    """
+    Pinta la fila de rojo suave si las horas restantes son negativas.
+    """
+    try:
+        val = row['Horas Restantes']
+        # Si es negativo, color rojo para toda la fila
+        if pd.notnull(val) and val < 0:
+            return ['background-color: #ffcccc; color: black'] * len(row)
+    except KeyError:
+        pass
+    # Si no, fondo por defecto
+    return [''] * len(row)
+
+# -----------------------------------------------------------------------------
+# MAIN
+# -----------------------------------------------------------------------------
 
 def main():
     st.title("📊 Dashboard de Control de Horas")
 
-    # -------------------------------------------------------------------------
-    # 1. LÓGICA DE CARGA AUTOMÁTICA VS MANUAL
-    # -------------------------------------------------------------------------
+    # 1. CARGA DE DATOS
     df_raw = None
     
     with st.sidebar:
-        st.header("1. Origen de Datos")
+        st.header("Origen de Datos")
         
-        # Opción A: Carga manual (por si quieren ver un archivo nuevo temporalmente)
-        uploaded_file = st.file_uploader("Actualizar datos (Opcional)", type=["csv", "xlsx"])
+        # Prioridad 1: Archivo subido manualmente
+        uploaded_file = st.file_uploader("Subir archivo nuevo (Opcional)", type=["csv", "xlsx"])
         
         if uploaded_file:
             df_raw = load_data(uploaded_file)
-            st.success("✅ Usando archivo subido manualmente.")
-        
-        # Opción B: Carga automática del archivo en el repo
+            st.success("✅ Usando archivo manual.")
+            
+        # Prioridad 2: Archivo en el repositorio (GitHub)
         elif os.path.exists(ARCHIVO_DEFECTO):
             df_raw = load_data(ARCHIVO_DEFECTO)
-            st.info(f"📂 Cargando datos predefinidos: {ARCHIVO_DEFECTO}")
+            st.info(f"📂 Usando datos del repositorio: {ARCHIVO_DEFECTO}")
         
         else:
-            st.warning("⚠️ No se encontró archivo por defecto ni se ha subido uno.")
+            st.warning(f"⚠️ No se encuentra '{ARCHIVO_DEFECTO}' en el repositorio.")
 
-    # Si tenemos datos, procedemos
     if df_raw is not None:
         df = process_data(df_raw)
 
-        # ---------------------------------------------------------------------
-        # 2. PRESUPUESTOS INTELIGENTES
-        # ---------------------------------------------------------------------
-        st.sidebar.header("2. Ajuste de Presupuestos")
+        # 2. PRESUPUESTOS
+        st.sidebar.divider()
+        st.sidebar.header("Presupuestos")
         
-        unique_projects = sorted(df['Project'].unique())
+        unique_projects = sorted(df['Project'].astype(str).unique())
         
-        # AQUÍ ESTÁ LA MAGIA: Mapeamos tus configuraciones al DataFrame
         budget_data = []
         for proj in unique_projects:
-            # Busca en tu diccionario, si no existe usa el default
             horas = PRESUPUESTOS_CONFIG.get(proj, DEFAULT_BUDGET)
             budget_data.append({'Project': proj, 'Horas Contratadas': float(horas)})
             
         budget_template = pd.DataFrame(budget_data)
 
-        # Mostramos el editor, pero ya vendrá con TUS números pre-rellenados
         edited_budget_df = st.data_editor(
             budget_template,
             column_config={
@@ -109,35 +136,36 @@ def main():
             key="budget_editor"
         )
 
-        # ---------------------------------------------------------------------
-        # 3. RESTO DE LA LÓGICA (Igual que antes)
-        # ---------------------------------------------------------------------
-        # Filtros
-        st.divider()
-        col1, col2 = st.columns(2)
-        with col1:
-            all_users = sorted(df['User'].unique())
-            sel_users = st.multiselect("Filtrar Usuarios", all_users, default=all_users)
-        with col2:
-            all_months = sorted(df['Month_Year'].unique())
-            sel_months = st.multiselect("Filtrar Meses", all_months, default=all_months)
+        # 3. FILTROS Y PROCESAMIENTO
+        # (Solo mostramos filtros si hay columnas para ello)
+        if 'User' in df.columns and 'Month_Year' in df.columns:
+            st.divider()
+            col1, col2 = st.columns(2)
+            with col1:
+                all_users = sorted(df['User'].astype(str).unique())
+                sel_users = st.multiselect("Usuarios", all_users, default=all_users)
+            with col2:
+                all_months = sorted(df['Month_Year'].unique())
+                sel_months = st.multiselect("Meses", all_months, default=all_months)
 
-        # Aplicar filtros
-        df_filtered = df[df['User'].isin(sel_users) & df['Month_Year'].isin(sel_months)]
-        
+            df_filtered = df[df['User'].isin(sel_users) & df['Month_Year'].isin(sel_months)]
+        else:
+            df_filtered = df
+
         if df_filtered.empty:
-            st.warning("Sin datos para mostrar.")
+            st.warning("Sin datos para mostrar con los filtros actuales.")
             return
 
-        # Cálculos
+        # Agrupación
         grouped = df_filtered.groupby('Project')['Duration (decimal)'].sum().reset_index()
         grouped.rename(columns={'Duration (decimal)': 'Horas Consumidas'}, inplace=True)
         
         merged = pd.merge(edited_budget_df, grouped, on='Project', how='left').fillna(0)
         merged['Horas Restantes'] = merged['Horas Contratadas'] - merged['Horas Consumidas']
-        merged['Estado'] = merged.apply(lambda x: 'Excedido' if x['Horas Restantes'] < 0 else 'OK', axis=1)
-
-        # Gráfico Principal
+        
+        # 4. VISUALIZACIÓN
+        
+        # Gráfico
         fig = px.bar(
             merged.melt(id_vars='Project', value_vars=['Horas Contratadas', 'Horas Consumidas']),
             x='Project', y='value', color='variable', barmode='group',
@@ -146,19 +174,21 @@ def main():
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # Tabla Detallada
-        st.subheader("Detalle Financiero")
+        # Tabla de Detalle
+        st.subheader("📋 Detalle Financiero")
         
-        # Formato de columnas
+        # Definimos formato numérico
         format_dict = {
             'Horas Contratadas': '{:,.0f}',
             'Horas Consumidas': '{:,.2f}', 
             'Horas Restantes': '{:,.2f}'
         }
         
+        # Aplicamos estilo con la nueva función robusta
         st.dataframe(
-            merged.style.format(format_dict)
-            .apply(lambda x: ['background-color: #ffcccc' if v < 0 else '' for v in x['Horas Restantes']] * len(x), axis=1, subset=pd.IndexSlice[:, :]), 
+            merged.style
+            .format(format_dict)
+            .apply(highlight_row, axis=1), 
             use_container_width=True
         )
 
