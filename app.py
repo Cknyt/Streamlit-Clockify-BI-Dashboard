@@ -12,7 +12,7 @@ ARCHIVO_DEFECTO = "data/reporte_horas.csv"
 # DICCIONARIO DE PRESUPUESTOS
 # Escribe el nombre EXACTO del proyecto (tal cual sale en Clockify) y sus horas.
 PRESUPUESTOS_CONFIG = {
-    "BUSTURIALDEA": 2500,
+    "BUSTURIALDEA": 500,
     "Consultoría BI": 500,
     "Mantenimiento": 150,
     "Diseño UX/UI": 300,
